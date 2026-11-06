@@ -1,0 +1,49 @@
+# Generates one Application per apps/<group>/<service>/overlays/<env>.
+# Hub model: Argo CD runs in a management cluster with the workload clusters registered as
+# "dev", "staging" and "prod" (argocd cluster add <ctx> --name dev). For one cluster per env
+# running its own Argo CD, restrict `directories` to that env and use the in-cluster server.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: marketplace-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/your-org/marketplace-gitops.git
+        revision: main
+        directories:
+          - path: apps/*/*/overlays/*
+  template:
+    metadata:
+      name: '{{ index .path.segments 2 }}-{{ index .path.segments 4 }}'
+      labels:
+        group: '{{ index .path.segments 1 }}'
+        env: '{{ index .path.segments 4 }}'
+      annotations:
+        notifications.argoproj.io/subscribe.on-sync-failed.slack: deploys
+    spec:
+      project: '{{ index .path.segments 1 }}'
+      source:
+        repoURL: https://github.com/your-org/marketplace-gitops.git
+        targetRevision: main
+        path: '{{ .path.path }}'
+      destination:
+        name: '{{ index .path.segments 4 }}'
+        namespace: '{{ index .path.segments 1 }}'
+      syncPolicy:
+        syncOptions: [CreateNamespace=true, ServerSideApply=true, PruneLast=true]
+        retry:
+          limit: 5
+          backoff: { duration: 10s, factor: 2, maxDuration: 3m }
+  # dev and staging sync automatically; prod waits for a human to press Sync after the promote PR merges.
+  templatePatch: |
+    {{- if ne (index .path.segments 4) "prod" }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

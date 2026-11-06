@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+
+# Written by CI (ci-cd.yaml for dev, promote.yaml for staging/prod). Do not edit by hand
+# except to roll back: set newTag to an earlier short SHA and commit.
+images:
+  - name: marketplace/web
+    newName: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/marketplace/web
+    newTag: bootstrap
+
+configMapGenerator:
+  - name: web-config
+    literals:
+      - APP_URL=https://dev.example.in
+      - API_URL=https://api.dev.example.in
+      - COGNITO_DOMAIN=marketplace-dev-REPLACE.auth.ap-south-1.amazoncognito.com
+      - COGNITO_WEB_CLIENT_ID=REPLACE_WEB_CLIENT_ID
+
+patches:
+  - target: { kind: HorizontalPodAutoscaler, name: web }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+  - target: { kind: Ingress, name: web }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: dev.example.in
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+        value: arn:aws:acm:ap-south-1:123456789012:certificate/REPLACE-dev

@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+
+# Written by CI (ci-cd.yaml for dev, promote.yaml for staging/prod). Do not edit by hand
+# except to roll back: set newTag to an earlier short SHA and commit.
+images:
+  - name: marketplace/search-svc
+    newName: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/marketplace/search-svc
+    newTag: bootstrap
+
+configMapGenerator:
+  - name: search-svc-config
+    literals:
+      - AWS_REGION=ap-south-1
+      - LOG_LEVEL=debug
+      - TABLE_NAME=marketplace-staging-marketplace
+      - CDN_BASE_URL=https://img.staging.example.in
+
+patches:
+  - target: { kind: HorizontalPodAutoscaler, name: search-svc }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+  - target: { kind: Ingress, name: search-svc }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api.staging.example.in
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+        value: arn:aws:acm:ap-south-1:123456789012:certificate/REPLACE-staging

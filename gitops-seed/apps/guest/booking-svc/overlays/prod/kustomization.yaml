@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+
+# Written by CI (ci-cd.yaml for dev, promote.yaml for staging/prod). Do not edit by hand
+# except to roll back: set newTag to an earlier short SHA and commit.
+images:
+  - name: marketplace/booking-svc
+    newName: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/marketplace/booking-svc
+    newTag: bootstrap
+
+configMapGenerator:
+  - name: booking-svc-config
+    literals:
+      - AWS_REGION=ap-south-1
+      - LOG_LEVEL=info
+      - TABLE_NAME=marketplace-prod-marketplace
+      - CDN_BASE_URL=https://img.example.in
+      - COGNITO_USER_POOL_ID=ap-south-1_REPLACEprod
+      - COGNITO_CLIENT_IDS=REPLACE_WEB_CLIENT_ID,REPLACE_MOBILE_CLIENT_ID
+      - RAZORPAY_SECRET_ID=arn:aws:secretsmanager:ap-south-1:123456789012:secret:marketplace-prod/razorpay-REPLACE
+      - PLATFORM_FEE_PCT=12
+      - HOLD_MINUTES=15
+
+patches:
+  - target: { kind: HorizontalPodAutoscaler, name: booking-svc }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 4
+  - target: { kind: Ingress, name: booking-svc }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api.example.in
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+        value: arn:aws:acm:ap-south-1:123456789012:certificate/REPLACE-prod

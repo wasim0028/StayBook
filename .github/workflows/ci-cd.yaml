@@ -1,0 +1,274 @@
+name: ci-cd
+
+# Push to main -> detect changed services -> build/test/scan/push each in parallel ->
+# one commit to the GitOps repo bumping every successful service's dev overlay -> Argo CD syncs.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "packages/**"
+      - "docker/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.base.json"
+      - ".github/services.json"
+      - ".github/workflows/ci-cd.yaml"
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Comma-separated service names, or "all"'
+        required: true
+        default: all
+
+# Deploys of main are serialized; a run that is pushing is never cancelled halfway.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_PREFIX: marketplace
+  GITOPS_REPO: your-org/marketplace-gitops
+  GITOPS_ENV: dev
+
+jobs:
+  detect:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.changes.outputs.matrix }}
+      any: ${{ steps.changes.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute build matrix
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          ONLY: ${{ github.event.inputs.services }}
+        run: node .github/scripts/changed-services.mjs
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # AWS OIDC
+    strategy:
+      fail-fast: false # one broken service must not block the others
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    env:
+      SERVICE: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: vars
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-${{ github.run_id }}-${{ matrix.name }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image reference
+        id: img
+        run: |
+          repo="${ECR_PREFIX}/${SERVICE}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "name=${{ steps.ecr.outputs.registry }}/${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${{ steps.ecr.outputs.registry }}/${repo}:${{ steps.vars.outputs.tag }}" >> "$GITHUB_OUTPUT"
+
+      # Tags are immutable in ECR, so a re-run of the same commit skips straight to the GitOps bump.
+      - name: Check if image already exists
+        id: exists
+        run: |
+          if aws ecr describe-images --repository-name "${{ steps.img.outputs.repo }}" \
+               --image-ids imageTag="${{ steps.vars.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ steps.img.outputs.ref }} already in ECR; skipping build"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Typecheck and test (Docker test stage)
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: test
+          build-args: SERVICE=${{ matrix.name }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+      - name: Build runtime image (local, for scanning)
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runtime
+          build-args: SERVICE=${{ matrix.name }}
+          load: true
+          push: false
+          tags: ${{ steps.img.outputs.ref }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+
+      - name: Scan image (Trivy)
+        if: steps.exists.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.img.outputs.ref }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push image
+        if: steps.exists.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runtime
+          build-args: SERVICE=${{ matrix.name }}
+          push: true
+          provenance: true
+          sbom: true
+          tags: ${{ steps.img.outputs.ref }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+
+      - name: Record deployment
+        run: |
+          mkdir -p deployed
+          jq -n --arg name "$SERVICE" --arg group "${{ matrix.group }}" \
+                --arg image "${{ steps.img.outputs.name }}" --arg tag "${{ steps.vars.outputs.tag }}" \
+                '{name:$name, group:$group, image:$image, tag:$tag}' > "deployed/${SERVICE}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployed-${{ matrix.name }}
+          path: deployed/${{ matrix.name }}.json
+          retention-days: 7
+
+  update-gitops:
+    name: Bump tags in GitOps repo (${{ github.sha }})
+    needs: [detect, build]
+    # Run even if some matrix legs failed, so the healthy services still ship.
+    if: ${{ !cancelled() && needs.detect.outputs.any == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install script dependencies
+        run: npm ci --prefix .github/scripts --no-audit --no-fund
+
+      - name: Collect successful builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deployed-*
+          path: deployed
+          merge-multiple: true
+
+      - name: Anything to deploy?
+        id: check
+        run: |
+          shopt -s nullglob
+          files=(deployed/*.json)
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+          (( ${#files[@]} > 0 )) || echo "::warning::No service built successfully; nothing to deploy"
+
+      - name: Create GitHub App token
+        if: steps.check.outputs.count != '0'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: marketplace-gitops
+
+      - name: Checkout GitOps repo
+        if: steps.check.outputs.count != '0'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+          path: gitops
+
+      - name: Commit and push (rebase and retry on conflict)
+        if: steps.check.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          cd gitops
+          git config user.name  "marketplace-ci[bot]"
+          git config user.email "marketplace-ci[bot]@users.noreply.github.com"
+
+          services=$(jq -rs 'map("\(.name)@\(.tag)") | join(", ")' ../deployed/*.json)
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            # Re-apply on top of the latest main each attempt, so concurrent edits are never lost.
+            node ../.github/scripts/gitops-images.mjs bump . "$GITOPS_ENV" ../deployed
+
+            if git diff --quiet; then
+              echo "Overlays already at these tags; nothing to commit."
+              exit 0
+            fi
+
+            git add -A
+            git commit -q -m "deploy(${GITOPS_ENV}): ${services}" \
+              -m "Source: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}" \
+              -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+            if git push origin HEAD:main; then
+              echo "Pushed on attempt ${attempt}: ${services}"
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); retrying"
+            sleep $((attempt * 3))
+          done
+          echo "Failed to push after 5 attempts" >&2
+          exit 1
+
+      - name: Summary
+        if: steps.check.outputs.count != '0'
+        run: |
+          {
+            echo "### Deployed to \`${GITOPS_ENV}\`"
+            echo "| Service | Image |"
+            echo "|---|---|"
+            jq -rs '.[] | "| \(.name) | `\(.image):\(.tag)` |"' deployed/*.json
+          } >> "$GITHUB_STEP_SUMMARY"

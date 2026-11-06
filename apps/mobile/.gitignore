@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+.export-check/
+ios/
+android/
+.env.local
+*.jks
+*.p8
+*.p12
+*.keystore
+*.mobileprovision
+expo-env.d.ts

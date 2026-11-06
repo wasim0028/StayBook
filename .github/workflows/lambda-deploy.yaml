@@ -1,0 +1,91 @@
+name: lambda-deploy
+
+# Builds, tests and deploys the Lambdas. Terraform owns their configuration (memory, env, triggers);
+# this workflow only ships code, publishing a new version on every deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lambdas/**"
+      - "packages/shared/**"
+      - "packages/test-utils/**"
+      - "package-lock.json"
+      - ".github/workflows/lambda-deploy.yaml"
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Target environment
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+
+concurrency:
+  group: lambda-deploy-${{ github.event.inputs.env || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  PROJECT: marketplace
+  TARGET_ENV: ${{ github.event.inputs.env || 'dev' }}
+
+jobs:
+  deploy:
+    name: ${{ matrix.fn }} -> ${{ github.event.inputs.env || 'dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Staging and prod need approval: configure required reviewers on these GitHub environments.
+    environment: ${{ github.event.inputs.env || 'dev' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        fn: [payment-webhook, hold-expirer, image-processor, booking-notifier, ops-indexer, host-evaluator]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install moto (DynamoDB emulator for tests)
+        run: pip install "moto[server,dynamodb]==5.1.22"
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck and test
+        run: |
+          npm run typecheck --workspace "lambdas/${{ matrix.fn }}"
+          npm test --workspace "lambdas/${{ matrix.fn }}"
+
+      - name: Package
+        run: npm run package --workspace "lambdas/${{ matrix.fn }}"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: gha-lambda-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy and publish version
+        env:
+          FN_NAME: ${{ env.PROJECT }}-${{ env.TARGET_ENV }}-${{ matrix.fn }}
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "$FN_NAME" \
+            --zip-file "fileb://lambdas/${{ matrix.fn }}/function.zip" \
+            --publish \
+            --query '{version: Version, sha256: CodeSha256}' --output table
+          aws lambda wait function-updated-v2 --function-name "$FN_NAME"
+          echo "### ${FN_NAME} deployed from \`${GITHUB_SHA::7}\`" >> "$GITHUB_STEP_SUMMARY"

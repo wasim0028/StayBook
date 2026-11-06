@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+.git
+.github
+infra
+gitops-seed
+apps/mobile
+apps/web/.next
+apps/web/node_modules
+docs
+*.md
+.env*

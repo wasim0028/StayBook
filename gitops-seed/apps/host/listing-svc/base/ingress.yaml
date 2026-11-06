@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: listing-svc
+  annotations:
+    alb.ingress.kubernetes.io/group.name: marketplace-api
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz/ready
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=20
+    # Set per overlay: alb.ingress.kubernetes.io/certificate-arn
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.example.in # patched per overlay
+      http:
+        paths:
+          - path: /v1/listings
+            pathType: Prefix
+            backend:
+              service: { name: listing-svc, port: { name: http } }
+          - path: /v1/host/listings
+            pathType: Prefix
+            backend:
+              service: { name: listing-svc, port: { name: http } }
+          - path: /v1/admin/listings
+            pathType: Prefix
+            backend:
+              service: { name: listing-svc, port: { name: http } }

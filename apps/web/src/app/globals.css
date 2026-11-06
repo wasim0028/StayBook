@@ -1,0 +1,143 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+/* Semantic tokens. Components use bg-surface, text-muted, border-line, bg-brand... never raw colours,
+   so dark mode is just a second set of values. */
+:root {
+  --bg: #faf9f7;
+  --surface: #ffffff;
+  --surface-2: #f3f1ee;
+  --fg: #1c1917;
+  --muted: #6b6560;
+  --line: #e7e3de;
+  --brand: #e5483a;
+  --brand-hover: #cf3b2e;
+  --brand-fg: #ffffff;
+  --brand-soft: #fdebe8;
+  --ok: #15803d;
+  --ok-soft: #e6f4ea;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --bad: #b91c1c;
+  --bad-soft: #fde8e8;
+  --info: #1d4ed8;
+  --info-soft: #e8efff;
+  --shadow: 0 1px 2px rgb(28 25 23 / 0.06), 0 8px 24px rgb(28 25 23 / 0.08);
+  /* Charts: validated single-series hue (dataviz reference slot 1), not the brand red, which reads as an error. */
+  --chart-1: #2a78d6;
+  --chart-grid: #ece9e4;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131110;
+    --surface: #1c1917;
+    --surface-2: #26221f;
+    --fg: #f5f2ee;
+    --muted: #a39d96;
+    --line: #36312d;
+    --brand: #f0594b;
+    --brand-hover: #f7776b;
+    --brand-fg: #1c0a08;
+    --brand-soft: #3a1b17;
+    --ok: #4ade80;
+    --ok-soft: #12301d;
+    --warn: #fbbf24;
+    --warn-soft: #34270a;
+    --bad: #f87171;
+    --bad-soft: #3b1414;
+    --info: #93b4ff;
+    --info-soft: #172544;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.4);
+    --chart-1: #3987e5;
+    --chart-grid: #2e2a27;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-fg: var(--brand-fg);
+  --color-brand-soft: var(--brand-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --shadow-card: var(--shadow);
+  --color-chart-1: var(--chart-1);
+  --color-chart-grid: var(--chart-grid);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+html {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Leaflet tweaks: pins are our own HTML, so reset the default marker chrome. */
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--surface-2);
+}
+.price-pin {
+  background: transparent;
+  border: 0;
+}
+.leaflet-popup-content-wrapper {
+  border-radius: 14px;
+  padding: 0;
+  overflow: hidden;
+}
+.leaflet-popup-content {
+  margin: 0;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 10px;
+}

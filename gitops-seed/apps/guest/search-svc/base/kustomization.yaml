@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: guest
+labels:
+  - pairs:
+      app.kubernetes.io/name: search-svc
+      app.kubernetes.io/part-of: marketplace
+      marketplace/group: guest
+    includeSelectors: false
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - networkpolicy.yaml
+  - ingress.yaml

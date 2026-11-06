@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    # Its own ALB group: the site (www) and the API scale and fail independently.
+    alb.ingress.kubernetes.io/group.name: marketplace-web
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz/ready
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=20
+    # Set per overlay: alb.ingress.kubernetes.io/certificate-arn
+spec:
+  ingressClassName: alb
+  rules:
+    - host: www.example.in # patched per overlay
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: web, port: { name: http } }

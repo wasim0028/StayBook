@@ -1,0 +1,20 @@
+# One AppProject per user group: apps in it may only deploy namespaced resources into "host".
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: host
+  namespace: argocd
+spec:
+  description: Workloads serving the host user group
+  sourceRepos:
+    - https://github.com/your-org/marketplace-gitops.git
+  destinations:
+    - name: "*"
+      namespace: host
+  clusterResourceWhitelist:
+    - { group: "", kind: Namespace }
+  namespaceResourceBlacklist:
+    - { group: "", kind: ResourceQuota }
+    - { group: "", kind: LimitRange }
+  orphanedResources:
+    warn: true

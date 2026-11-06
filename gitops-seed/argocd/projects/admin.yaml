@@ -1,0 +1,20 @@
+# One AppProject per user group: apps in it may only deploy namespaced resources into "admin".
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: admin
+  namespace: argocd
+spec:
+  description: Workloads serving the admin user group
+  sourceRepos:
+    - https://github.com/your-org/marketplace-gitops.git
+  destinations:
+    - name: "*"
+      namespace: admin
+  clusterResourceWhitelist:
+    - { group: "", kind: Namespace }
+  namespaceResourceBlacklist:
+    - { group: "", kind: ResourceQuota }
+    - { group: "", kind: LimitRange }
+  orphanedResources:
+    warn: true

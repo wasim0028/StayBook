@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: web }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 25%, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      serviceAccountName: web
+      automountServiceAccountToken: false # no AWS access needed: it only calls the public API and Cognito
+      terminationGracePeriodSeconds: 45 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: web } }
+      containers:
+        - name: app
+          image: marketplace/web # logical name; overlays set the ECR repo and tag
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: web-config }
+          env:
+            - { name: PORT, value: "8080" }
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits: { memory: 512Mi }
+          startupProbe:
+            httpGet: { path: /healthz/live, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz/live, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            # Next.js writes its fetch/ISR cache here; everything else is read-only.
+            - { name: next-cache, mountPath: /app/.next/cache }
+      volumes:
+        - name: next-cache
+          emptyDir: { sizeLimit: 256Mi }

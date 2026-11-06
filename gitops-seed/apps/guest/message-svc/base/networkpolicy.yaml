@@ -1,0 +1,29 @@
+# Ingress only from the ALB (target-type ip sends traffic from VPC addresses) on the app port.
+# Egress: DNS plus HTTPS (DynamoDB/S3 via gateway endpoints, STS/Cognito JWKS via NAT or interface endpoints).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: message-svc
+spec:
+  podSelector:
+    matchLabels: { app: message-svc }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 10.0.0.0/16 } # VPC CIDR
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - ports:
+        - { protocol: TCP, port: 443 }
+    - to:
+        - ipBlock: { cidr: 169.254.170.23/32 } # EKS Pod Identity agent
+      ports:
+        - { protocol: TCP, port: 80 }

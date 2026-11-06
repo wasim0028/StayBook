@@ -1,0 +1,80 @@
+{
+  "$comment": "Build matrix source of truth. group = Kubernetes namespace and the folder in the GitOps repo (apps/<group>/<name>). Any change under sharedPaths rebuilds every service.",
+  "sharedPaths": [
+    "packages/shared/",
+    "packages/test-utils/",
+    "docker/node-service.Dockerfile",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.base.json",
+    ".github/services.json",
+    ".github/workflows/ci-cd.yaml"
+  ],
+  "services": [
+    {
+      "name": "listing-svc",
+      "group": "host",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/listing-svc/"
+      ]
+    },
+    {
+      "name": "search-svc",
+      "group": "guest",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/search-svc/"
+      ]
+    },
+    {
+      "name": "booking-svc",
+      "group": "guest",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/booking-svc/"
+      ]
+    },
+    {
+      "name": "user-svc",
+      "group": "guest",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/user-svc/"
+      ]
+    },
+    {
+      "name": "review-svc",
+      "group": "guest",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/review-svc/"
+      ]
+    },
+    {
+      "name": "message-svc",
+      "group": "guest",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/message-svc/"
+      ]
+    },
+    {
+      "name": "admin-svc",
+      "group": "admin",
+      "dockerfile": "docker/node-service.Dockerfile",
+      "paths": [
+        "services/admin-svc/"
+      ]
+    },
+    {
+      "name": "web",
+      "group": "guest",
+      "dockerfile": "docker/web.Dockerfile",
+      "paths": [
+        "apps/web/",
+        "docker/web.Dockerfile"
+      ]
+    }
+  ]
+}

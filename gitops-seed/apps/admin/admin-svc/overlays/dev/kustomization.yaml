@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+
+# Written by CI (ci-cd.yaml for dev, promote.yaml for staging/prod). Do not edit by hand
+# except to roll back: set newTag to an earlier short SHA and commit.
+images:
+  - name: marketplace/admin-svc
+    newName: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/marketplace/admin-svc
+    newTag: bootstrap
+
+configMapGenerator:
+  - name: admin-svc-config
+    literals:
+      - AWS_REGION=ap-south-1
+      - LOG_LEVEL=debug
+      - TABLE_NAME=marketplace-dev-marketplace
+      - COGNITO_USER_POOL_ID=ap-south-1_REPLACEdev
+      - COGNITO_CLIENT_IDS=REPLACE_WEB_CLIENT_ID,REPLACE_MOBILE_CLIENT_ID
+
+patches:
+  - target: { kind: HorizontalPodAutoscaler, name: admin-svc }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+  - target: { kind: Ingress, name: admin-svc }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: api.dev.example.in
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+        value: arn:aws:acm:ap-south-1:123456789012:certificate/REPLACE-dev

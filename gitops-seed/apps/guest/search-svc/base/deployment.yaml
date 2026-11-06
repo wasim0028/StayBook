@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-svc
+spec:
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app: search-svc }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 25%, maxUnavailable: 0 }
+  template:
+    metadata:
+      labels: { app: search-svc }
+    spec:
+      serviceAccountName: search-svc
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45 # > SHUTDOWN_DRAIN_MS (15s) + request time
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: search-svc } }
+      containers:
+        - name: app
+          image: marketplace/search-svc # logical name; overlays set the ECR repo and tag
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: search-svc-config }
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: SHUTDOWN_DRAIN_MS, value: "15000" }
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { memory: 256Mi }
+          startupProbe:
+            httpGet: { path: /healthz/live, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /healthz/ready, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: { path: /healthz/live, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

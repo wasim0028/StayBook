@@ -1,0 +1,106 @@
+name: promote
+
+# Copies the image a service is running in one environment into the next, as a pull request
+# in the GitOps repo. Merging that PR is the approval gate; Argo CD syncs after merge.
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service name (from .github/services.json)
+        required: true
+      from:
+        description: Source environment
+        type: choice
+        options: [dev, staging]
+        default: dev
+      to:
+        description: Target environment
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+permissions:
+  contents: read
+
+env:
+  GITOPS_REPO: your-org/marketplace-gitops
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install script dependencies
+        run: npm ci --prefix .github/scripts --no-audit --no-fund
+
+      - name: Validate inputs
+        id: svc
+        env:
+          SERVICE: ${{ inputs.service }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: |
+          set -euo pipefail
+          [[ "$FROM" != "$TO" ]] || { echo "from and to must differ" >&2; exit 1; }
+          [[ "$FROM" == dev && "$TO" == staging || "$FROM" == staging && "$TO" == prod ]] \
+            || { echo "only dev->staging and staging->prod are allowed" >&2; exit 1; }
+          group=$(jq -er --arg n "$SERVICE" '.services[] | select(.name == $n) | .group' .github/services.json) \
+            || { echo "unknown service: $SERVICE" >&2; exit 1; }
+          echo "group=$group" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: marketplace-gitops
+
+      - name: Checkout GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+          path: gitops
+
+      - name: Copy image tag and open PR
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SERVICE: ${{ inputs.service }}
+          GROUP: ${{ steps.svc.outputs.group }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../deployed
+          node ../.github/scripts/gitops-images.mjs read . "$GROUP" "$SERVICE" "$FROM" > "../deployed/$SERVICE.json"
+          tag=$(jq -r .tag "../deployed/$SERVICE.json")
+          node ../.github/scripts/gitops-images.mjs bump . "$TO" ../deployed
+
+          if git diff --quiet; then
+            echo "::notice::$SERVICE is already at $tag in $TO"
+            exit 0
+          fi
+
+          branch="promote/$SERVICE-$TO-$tag"
+          git config user.name  "marketplace-ci[bot]"
+          git config user.email "marketplace-ci[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "promote($TO): $SERVICE@$tag from $FROM"
+          git push -f origin "$branch"
+
+          gh pr create --repo "$GITOPS_REPO" --base main --head "$branch" \
+            --title "Promote $SERVICE@$tag to $TO" \
+            --body "Promotes \`$SERVICE\` from \`$FROM\` to \`$TO\` (image tag \`$tag\`). Requested by @${GITHUB_ACTOR} in ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}." \
+            || echo "::notice::PR for $branch already exists"

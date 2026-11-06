@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.tfstate
+*.tfstate.*
+.terraform/
+.DS_Store
+function.zip
+.next/
+.expo/
+.export-check/
+*.tsbuildinfo
+.terraform.lock.hcl.bak

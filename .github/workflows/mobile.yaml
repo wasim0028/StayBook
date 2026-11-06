@@ -1,0 +1,59 @@
+name: mobile
+
+# PRs: typecheck and bundle for both platforms.
+# Tags like mobile-v1.2.0: build store binaries on EAS (needs an EXPO_TOKEN secret and an Expo account).
+on:
+  pull_request:
+    paths: ["apps/mobile/**", ".github/workflows/mobile.yaml"]
+  push:
+    tags: ["mobile-v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/mobile
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Bundle android + ios
+        env:
+          EXPO_PUBLIC_API_URL: https://api.dev.example.in
+          EXPO_PUBLIC_COGNITO_REGION: ap-south-1
+          EXPO_PUBLIC_COGNITO_USER_POOL_ID: ap-south-1_ci
+          EXPO_PUBLIC_COGNITO_CLIENT_ID: ci
+          EXPO_PUBLIC_COGNITO_DOMAIN: https://ci.auth.ap-south-1.amazoncognito.com
+        run: npx expo export --platform android --platform ios --output-dir .export-check
+
+  eas-build:
+    if: startsWith(github.ref, 'refs/tags/mobile-v')
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci --no-audit --no-fund
+      # Queues the builds on EAS and returns; binaries appear in the Expo dashboard.
+      # EXPO_PUBLIC_* values for production come from the EAS "production" environment.
+      - run: eas build --platform all --profile production --non-interactive --no-wait

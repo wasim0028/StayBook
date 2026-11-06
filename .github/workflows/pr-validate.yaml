@@ -1,0 +1,86 @@
+name: pr-validate
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install moto (DynamoDB emulator for integration tests)
+        run: pip install "moto[server,dynamodb]==5.1.22"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: Production build (config is read at request time, so placeholders are enough)
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  workflow-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix .github/scripts --no-audit --no-fund
+      - name: Matrix script smoke test
+        run: ONLY=all node .github/scripts/changed-services.mjs
+      - name: Image bump dry run against the GitOps seed
+        run: |
+          mkdir -p /tmp/deployed /tmp/gitops
+          cp -r gitops-seed/. /tmp/gitops/
+          echo '{"name":"listing-svc","group":"host","image":"123456789012.dkr.ecr.ap-south-1.amazonaws.com/marketplace/listing-svc","tag":"abc1234"}' > /tmp/deployed/listing-svc.json
+          node .github/scripts/gitops-images.mjs bump /tmp/gitops dev /tmp/deployed
